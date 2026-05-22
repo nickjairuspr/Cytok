@@ -20,4 +20,5 @@ export interface ChatSettings {
   maxTokens: number;
   apiKey: string;
   webSearch: boolean;
+  wallpaper?: string;
 }

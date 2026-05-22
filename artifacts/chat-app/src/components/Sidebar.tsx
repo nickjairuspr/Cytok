@@ -175,8 +175,8 @@ function SidebarContent({
       </ScrollArea>
 
       {/* Footer */}
-      {sessions.length > 0 && (
-        <div className="p-3 border-t border-sidebar-border shrink-0">
+      <div className="p-3 border-t border-sidebar-border shrink-0 space-y-1">
+        {sessions.length > 0 && (
           <Button
             variant="ghost"
             onClick={onClearAll}
@@ -186,8 +186,11 @@ function SidebarContent({
             <Trash2 className="h-3.5 w-3.5" />
             Clear all chats
           </Button>
-        </div>
-      )}
+        )}
+        <p className="text-[10px] text-muted-foreground/30 text-center pt-1 tracking-wide select-none">
+          Made by <span className="text-primary/50 font-medium">nickjairus</span>
+        </p>
+      </div>
     </div>
   );
 }

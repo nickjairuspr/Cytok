@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Settings2, Eye, EyeOff } from "lucide-react";
+import { useState, useRef } from "react";
+import { Settings2, Eye, EyeOff, Upload, X, ImageIcon } from "lucide-react";
 import { ChatSettings } from "../lib/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -23,9 +23,10 @@ export function SettingsModal({ open, onOpenChange, settings, onSave }: Settings
 
   const [local, setLocal] = useState<ChatSettings>(settings);
   const [showKey, setShowKey] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleOpen = (isOpen: boolean) => {
-    if (isOpen) setLocal(settings); // sync on open
+    if (isOpen) setLocal(settings);
     onOpenChange(isOpen);
   };
 
@@ -33,6 +34,22 @@ export function SettingsModal({ open, onOpenChange, settings, onSave }: Settings
     onSave(local);
     toast.success("Settings saved");
     onOpenChange(false);
+  };
+
+  const handleWallpaperUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image must be under 5 MB");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      setLocal((prev) => ({ ...prev, wallpaper: dataUrl }));
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
   };
 
   const models = modelsData ?? [
@@ -51,7 +68,6 @@ export function SettingsModal({ open, onOpenChange, settings, onSave }: Settings
           rounded-2xl
         "
       >
-        {/* Subtle top glow line */}
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-1/2 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent rounded-full" />
 
         <DialogHeader className="pb-2">
@@ -78,11 +94,7 @@ export function SettingsModal({ open, onOpenChange, settings, onSave }: Settings
                 value={local.apiKey}
                 onChange={(e) => setLocal({ ...local, apiKey: e.target.value })}
                 placeholder="Enter your CytoAI key…"
-                className="
-                  bg-input/50 border-border/50 pr-10 text-sm
-                  focus-visible:ring-1 focus-visible:ring-primary/40
-                  focus-visible:border-primary/40
-                "
+                className="bg-input/50 border-border/50 pr-10 text-sm focus-visible:ring-1 focus-visible:ring-primary/40 focus-visible:border-primary/40"
                 data-testid="input-api-key"
               />
               <Button
@@ -145,8 +157,7 @@ export function SettingsModal({ open, onOpenChange, settings, onSave }: Settings
               data-testid="slider-temperature"
             />
             <div className="flex justify-between text-[10px] text-muted-foreground/40">
-              <span>Precise</span>
-              <span>Creative</span>
+              <span>Precise</span><span>Creative</span>
             </div>
           </div>
 
@@ -168,13 +179,12 @@ export function SettingsModal({ open, onOpenChange, settings, onSave }: Settings
               data-testid="slider-max-tokens"
             />
             <div className="flex justify-between text-[10px] text-muted-foreground/40">
-              <span>256</span>
-              <span>8192</span>
+              <span>256</span><span>8192</span>
             </div>
           </div>
 
           {/* Web Search */}
-          <div className="flex items-center justify-between py-1 border-t border-border/40 pt-4">
+          <div className="flex items-center justify-between border-t border-border/40 pt-4">
             <div>
               <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                 Web Search
@@ -188,6 +198,69 @@ export function SettingsModal({ open, onOpenChange, settings, onSave }: Settings
               onCheckedChange={(v) => setLocal({ ...local, webSearch: v })}
               className="data-[state=checked]:bg-primary"
               data-testid="switch-web-search"
+            />
+          </div>
+
+          {/* Wallpaper */}
+          <div className="space-y-2 border-t border-border/40 pt-4">
+            <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+              <ImageIcon className="h-3 w-3" />
+              UI Wallpaper
+            </Label>
+            <p className="text-[10px] text-muted-foreground/50">
+              Upload an image to use as the chat background.
+            </p>
+
+            {local.wallpaper ? (
+              <div className="relative rounded-xl overflow-hidden border border-border/50 h-24 group">
+                <img
+                  src={local.wallpaper}
+                  alt="Wallpaper preview"
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="text-white text-[11px] bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition-colors"
+                  >
+                    <Upload className="h-3 w-3" />
+                    Change
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLocal((p) => ({ ...p, wallpaper: undefined }))}
+                    className="text-white text-[11px] bg-red-500/40 hover:bg-red-500/60 rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition-colors"
+                  >
+                    <X className="h-3 w-3" />
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="
+                  w-full h-20 rounded-xl border border-dashed border-border/60
+                  bg-input/30 hover:bg-primary/5 hover:border-primary/40
+                  flex flex-col items-center justify-center gap-1.5
+                  text-muted-foreground/50 hover:text-primary
+                  transition-all duration-200 group
+                "
+              >
+                <Upload className="h-4 w-4 group-hover:scale-110 transition-transform" />
+                <span className="text-[11px]">Click to upload image</span>
+                <span className="text-[10px] opacity-60">PNG, JPG, WebP · max 5 MB</span>
+              </button>
+            )}
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="sr-only"
+              onChange={handleWallpaperUpload}
             />
           </div>
         </div>
