@@ -8,6 +8,7 @@ export const defaultSettings: ChatSettings = {
   temperature: 0.7,
   maxTokens: 2048,
   apiKey: "",
+  webSearch: false,
 };
 
 export function useChat() {
@@ -17,11 +18,9 @@ export function useChat() {
   const [isStreaming, setIsStreaming] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Initialize first session if none exists
+  // Activate most recent session on load
   useEffect(() => {
-    if (sessions.length === 0 && !activeSessionId) {
-      // createNewSession();
-    } else if (sessions.length > 0 && !activeSessionId) {
+    if (sessions.length > 0 && !activeSessionId) {
       setActiveSessionId(sessions[0].id);
     }
   }, [sessions.length, activeSessionId]);
@@ -43,9 +42,7 @@ export function useChat() {
 
   const deleteSession = useCallback((id: string) => {
     setSessions((prev) => prev.filter((s) => s.id !== id));
-    if (activeSessionId === id) {
-      setActiveSessionId(null);
-    }
+    if (activeSessionId === id) setActiveSessionId(null);
   }, [setSessions, activeSessionId]);
 
   const clearAllSessions = useCallback(() => {
@@ -64,12 +61,13 @@ export function useChat() {
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim()) return;
 
+    // Ensure a session exists
     let sessionId = activeSessionId;
     if (!sessionId) {
       sessionId = uuidv4();
       const newSession: ChatSession = {
-        id: sessionId as string,
-        title: content.slice(0, 30) + (content.length > 30 ? "..." : ""),
+        id: sessionId,
+        title: content.slice(0, 40) + (content.length > 40 ? "..." : ""),
         createdAt: Date.now(),
         updatedAt: Date.now(),
         messages: [],
@@ -78,11 +76,11 @@ export function useChat() {
       setSessions((prev) => [newSession, ...prev]);
       setActiveSessionId(sessionId);
     } else if (activeSession?.messages.length === 0) {
-      // Update title on first message
+      // Auto-title from first message
       setSessions((prev) =>
         prev.map((s) =>
           s.id === sessionId
-            ? { ...s, title: content.slice(0, 30) + (content.length > 30 ? "..." : "") }
+            ? { ...s, title: content.slice(0, 40) + (content.length > 40 ? "..." : "") }
             : s
         )
       );
@@ -103,47 +101,51 @@ export function useChat() {
       createdAt: Date.now(),
     };
 
+    // Add both messages optimistically
     setSessions((prev) =>
-      prev.map((s) => {
-        if (s.id === sessionId) {
-          return {
-            ...s,
-            updatedAt: Date.now(),
-            messages: [...s.messages, userMessage, initialAssistantMessage],
-          };
-        }
-        return s;
-      })
+      prev.map((s) =>
+        s.id === sessionId
+          ? { ...s, updatedAt: Date.now(), messages: [...s.messages, userMessage, initialAssistantMessage] }
+          : s
+      )
     );
 
     setIsStreaming(true);
     abortControllerRef.current = new AbortController();
 
     try {
+      // Build message history for API (exclude the empty placeholder)
       const activeSess = sessions.find((s) => s.id === sessionId);
-      const messagesForApi = [...(activeSess?.messages || []), userMessage].map((m) => ({
+      const messagesForApi = [...(activeSess?.messages ?? []), userMessage].map((m) => ({
         role: m.role,
         content: m.content,
       }));
+
+      // Build request body — add web search tool if enabled
+      const body: Record<string, unknown> = {
+        model: settings.model,
+        messages: messagesForApi,
+        stream: true,
+        temperature: settings.temperature,
+        max_tokens: settings.maxTokens,
+      };
+      if (settings.webSearch) {
+        body.tools = [{ type: "web_search_preview" }];
+      }
 
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": settings.apiKey,
+          ...(settings.apiKey ? { "x-api-key": settings.apiKey } : {}),
         },
-        body: JSON.stringify({
-          model: settings.model,
-          messages: messagesForApi,
-          stream: true,
-          temperature: settings.temperature,
-          max_tokens: settings.maxTokens,
-        }),
+        body: JSON.stringify(body),
         signal: abortControllerRef.current.signal,
       });
 
       if (!response.ok) {
-        throw new Error("Failed to fetch from API");
+        const errorData = await response.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(errorData.error ?? `HTTP ${response.status}`);
       }
 
       const reader = response.body!.getReader();
@@ -153,7 +155,7 @@ export function useChat() {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const text = decoder.decode(value);
+        const text = decoder.decode(value, { stream: true });
         for (const line of text.split("\n")) {
           if (line.startsWith("data: ") && !line.includes("[DONE]")) {
             try {
@@ -162,58 +164,58 @@ export function useChat() {
               if (delta) {
                 streamedContent += delta;
                 setSessions((prev) =>
-                  prev.map((s) => {
-                    if (s.id === sessionId) {
-                      return {
-                        ...s,
-                        messages: s.messages.map((m) =>
-                          m.id === assistantMessageId
-                            ? { ...m, content: streamedContent }
-                            : m
-                        ),
-                      };
-                    }
-                    return s;
-                  })
+                  prev.map((s) =>
+                    s.id === sessionId
+                      ? {
+                          ...s,
+                          messages: s.messages.map((m) =>
+                            m.id === assistantMessageId ? { ...m, content: streamedContent } : m
+                          ),
+                        }
+                      : s
+                  )
                 );
               }
-            } catch {}
+            } catch { /* skip malformed chunks */ }
           }
         }
       }
-    } catch (error: any) {
-      if (error.name !== "AbortError") {
-        console.error("Chat error:", error);
-      }
+    } catch (error: unknown) {
+      if (error instanceof Error && error.name === "AbortError") return;
+      // Write error into the assistant message so it's visible
+      const msg = error instanceof Error ? error.message : "Something went wrong.";
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === sessionId
+            ? {
+                ...s,
+                messages: s.messages.map((m) =>
+                  m.id === assistantMessageId
+                    ? { ...m, content: `**Error:** ${msg}` }
+                    : m
+                ),
+              }
+            : s
+        )
+      );
     } finally {
       setIsStreaming(false);
       abortControllerRef.current = null;
     }
-  }, [activeSessionId, activeSession?.messages, setSessions, settings, sessions]);
+  }, [activeSessionId, activeSession?.messages.length, setSessions, settings, sessions]);
 
   const regenerateLastMessage = useCallback(() => {
     if (!activeSession) return;
-    const messages = activeSession.messages;
-    if (messages.length < 2) return;
-    
-    // Remove the last assistant message and find the last user message
-    const lastUserMessageIndex = messages.slice().reverse().findIndex(m => m.role === 'user');
-    if (lastUserMessageIndex === -1) return;
-    
-    const actualIndex = messages.length - 1 - lastUserMessageIndex;
-    const content = messages[actualIndex].content;
-    
-    // remove everything from actualIndex onwards
-    setSessions(prev => prev.map(s => {
-      if (s.id === activeSessionId) {
-        return {
-          ...s,
-          messages: s.messages.slice(0, actualIndex)
-        }
-      }
-      return s;
-    }));
-    
+    const msgs = activeSession.messages;
+    const lastUserIdx = [...msgs].reverse().findIndex((m) => m.role === "user");
+    if (lastUserIdx === -1) return;
+    const actualIdx = msgs.length - 1 - lastUserIdx;
+    const content = msgs[actualIdx].content;
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === activeSessionId ? { ...s, messages: s.messages.slice(0, actualIdx) } : s
+      )
+    );
     sendMessage(content);
   }, [activeSession, activeSessionId, setSessions, sendMessage]);
 
@@ -226,7 +228,6 @@ export function useChat() {
       );
     }
   }, [activeSessionId, setSessions]);
-
 
   return {
     sessions,
@@ -242,6 +243,6 @@ export function useChat() {
     settings,
     setSettings,
     clearChat,
-    regenerateLastMessage
+    regenerateLastMessage,
   };
 }

@@ -19,4 +19,5 @@ export interface ChatSettings {
   temperature: number;
   maxTokens: number;
   apiKey: string;
+  webSearch: boolean;
 }

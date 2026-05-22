@@ -1,13 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Sidebar } from "../components/Sidebar";
 import { MessageList } from "../components/MessageList";
 import { ChatInput } from "../components/ChatInput";
 import { SettingsModal } from "../components/SettingsModal";
 import { useChat } from "../hooks/useChat";
 import { Button } from "../components/ui/button";
-import { Download, Terminal } from "lucide-react";
+import { Download, Sparkles, Zap } from "lucide-react";
 import { toast } from "sonner";
-import { useTheme } from "../components/ThemeProvider";
+import { useState } from "react";
+
+const SUGGESTED_PROMPTS = [
+  { label: "Explain", body: "how React Server Components work and when to use them" },
+  { label: "Write", body: "a Python script to batch-rename files by date" },
+  { label: "Debug", body: "a CORS error — what causes it and how do I fix it?" },
+  { label: "Design", body: "a PostgreSQL schema for a multi-tenant SaaS app" },
+];
 
 export function Chat() {
   const {
@@ -24,15 +31,14 @@ export function Chat() {
     settings,
     setSettings,
     clearChat,
-    regenerateLastMessage
+    regenerateLastMessage,
   } = useChat();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const { theme } = useTheme();
 
   // Keyboard shortcuts
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         createNewSession();
@@ -42,90 +48,133 @@ export function Chat() {
         stopGeneration();
       }
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
   }, [createNewSession, isStreaming, stopGeneration]);
 
   const handleExport = () => {
     if (!activeSession) return;
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(activeSession, null, 2));
-    const downloadAnchorNode = document.createElement('a');
-    downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", `chat_export_${activeSession.id.slice(0, 8)}.json`);
-    document.body.appendChild(downloadAnchorNode);
-    downloadAnchorNode.click();
-    downloadAnchorNode.remove();
-    toast.success("Chat exported successfully");
+    const blob = new Blob([JSON.stringify(activeSession, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `cytoai-chat-${activeSession.id.slice(0, 8)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Conversation exported");
   };
 
+  const hasMessages = (activeSession?.messages.length ?? 0) > 0;
+
   return (
-    <div className="flex h-[100dvh] bg-background text-foreground overflow-hidden font-sans">
+    <div className="flex h-[100dvh] bg-background text-foreground overflow-hidden starfield">
       <Sidebar
         sessions={sessions}
         activeSessionId={activeSessionId}
         onSelectSession={setActiveSessionId}
         onNewSession={createNewSession}
-        onDeleteSession={deleteSession}
-        onClearAll={clearAllSessions}
+        onDeleteSession={(id) => { deleteSession(id); toast.success("Chat deleted"); }}
+        onClearAll={() => { clearAllSessions(); toast.success("All chats cleared"); }}
         onOpenSettings={() => setSettingsOpen(true)}
       />
 
-      <main className="flex-1 flex flex-col relative h-full min-w-0 bg-[#0d0d0d]">
-        {/* Header */}
-        <header className="h-14 flex items-center justify-between px-4 border-b border-border/50 bg-background/50 backdrop-blur-md z-10 hidden md:flex">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            {activeSession?.title || "New Chat"}
-          </div>
-          <div className="flex items-center gap-2">
-            {activeSession && activeSession.messages.length > 0 && (
-              <Button variant="ghost" size="sm" onClick={handleExport} className="h-8 text-muted-foreground hover:text-foreground">
-                <Download className="h-4 w-4 mr-2" />
-                Export
-              </Button>
-            )}
-          </div>
-        </header>
+      {/* Main area */}
+      <main className="flex-1 flex flex-col relative h-full min-w-0 overflow-hidden">
 
-        {/* Chat Area */}
+        {/* Top bar — only when there are messages */}
+        {hasMessages && (
+          <header className="
+            h-12 shrink-0 hidden md:flex items-center justify-between
+            px-6 border-b border-border/30
+            bg-background/60 backdrop-blur-xl z-10
+          ">
+            <div className="flex items-center gap-2 text-xs font-medium text-foreground/60 truncate max-w-sm">
+              <Zap className="h-3.5 w-3.5 text-primary shrink-0" />
+              <span className="truncate">{activeSession?.title ?? "New Chat"}</span>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleExport}
+              className="h-7 text-xs text-muted-foreground hover:text-foreground gap-1.5"
+              data-testid="button-export"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Export
+            </Button>
+          </header>
+        )}
+
+        {/* Chat body */}
         <div className="flex-1 flex flex-col overflow-hidden relative">
-          {!activeSession || activeSession.messages.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-500">
-              <div className="w-16 h-16 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(249,115,22,0.15)]">
-                <Terminal className="w-8 h-8" />
+
+          {/* Empty / Welcome state */}
+          {!hasMessages && (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center select-none">
+              {/* Moonlight glow orb */}
+              <div className="relative mb-8">
+                <div className="
+                  w-16 h-16 rounded-2xl
+                  bg-primary/10 border border-primary/25
+                  flex items-center justify-center
+                  shadow-[0_0_40px_hsl(var(--primary)/0.2),0_0_80px_hsl(var(--primary)/0.08)]
+                ">
+                  <Sparkles className="w-7 h-7 text-primary" />
+                </div>
+                {/* Ambient rings */}
+                <div className="absolute inset-0 rounded-2xl border border-primary/15 scale-125 opacity-60" />
+                <div className="absolute inset-0 rounded-2xl border border-primary/08 scale-150 opacity-40" />
               </div>
-              <h1 className="text-2xl font-semibold mb-2">How can I help you today?</h1>
-              <p className="text-muted-foreground mb-8 max-w-md">
-                I'm CytoAI, a powerful assistant designed for developers. Ask me anything about code, architecture, or technical concepts.
+
+              <h1 className="text-2xl font-semibold mb-2 text-moonlight">
+                How can I help you today?
+              </h1>
+              <p className="text-sm text-muted-foreground/60 mb-10 max-w-xs leading-relaxed">
+                Ask me anything — code, architecture, debugging, or analysis.
               </p>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full max-w-2xl">
-                {[
-                  "Explain how React Server Components work",
-                  "Write a Python script to scrape a website",
-                  "Help me debug a CORS error in my API",
-                  "Design a database schema for an e-commerce store"
-                ].map((prompt, i) => (
+
+              {/* Suggestion cards */}
+              <div className="grid grid-cols-2 gap-2.5 w-full max-w-xl">
+                {SUGGESTED_PROMPTS.map((p, i) => (
                   <button
                     key={i}
-                    onClick={() => sendMessage(prompt)}
-                    className="p-4 rounded-xl border border-border/50 bg-card hover:bg-muted/50 hover:border-primary/30 transition-all text-left text-sm text-foreground/80 flex flex-col"
+                    onClick={() => sendMessage(`${p.label} ${p.body}`)}
+                    className="
+                      group p-3.5 rounded-xl text-left
+                      bg-card/50 border border-border/40
+                      hover:border-primary/30 hover:bg-primary/5
+                      hover:shadow-[0_0_16px_hsl(var(--primary)/0.08)]
+                      transition-all duration-200
+                    "
+                    data-testid={`prompt-${i}`}
                   >
-                    <span className="font-medium text-foreground">{prompt.split(' ')[0]}</span>
-                    <span className="text-muted-foreground truncate w-full">{prompt.split(' ').slice(1).join(' ')}</span>
+                    <span className="block text-xs font-semibold text-primary mb-1">{p.label}</span>
+                    <span className="block text-xs text-muted-foreground/70 leading-relaxed">{p.body}</span>
                   </button>
                 ))}
               </div>
+
+              <p className="mt-8 text-[10px] text-muted-foreground/30 tracking-wider uppercase">
+                Cmd K · new chat &nbsp;·&nbsp; Esc · stop
+              </p>
             </div>
-          ) : (
-            <MessageList 
-              messages={activeSession.messages} 
-              isStreaming={isStreaming} 
+          )}
+
+          {/* Messages */}
+          {hasMessages && (
+            <MessageList
+              messages={activeSession!.messages}
+              isStreaming={isStreaming}
               onRegenerate={regenerateLastMessage}
             />
           )}
 
-          {/* Input Area */}
-          <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-background via-background to-transparent pt-6">
+          {/* Input — pinned to bottom with fade gradient */}
+          <div className="
+            absolute bottom-0 left-0 right-0 z-10
+            bg-gradient-to-t from-background via-background/95 to-transparent
+            pt-8
+          ">
             <ChatInput
               onSend={sendMessage}
               isStreaming={isStreaming}
@@ -133,6 +182,8 @@ export function Chat() {
               model={settings.model}
               onModelChange={(model) => setSettings({ ...settings, model })}
               onClear={clearChat}
+              webSearch={settings.webSearch}
+              onWebSearchChange={(webSearch) => setSettings({ ...settings, webSearch })}
             />
           </div>
         </div>
