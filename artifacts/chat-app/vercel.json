@@ -1,11 +1,7 @@
 {
   "buildCommand": "pnpm run build",
   "outputDirectory": "dist/public",
-  "framework": "vite",
   "rewrites": [
-    { "source": "/api/chat",    "destination": "/api/chat" },
-    { "source": "/api/models",  "destination": "/api/models" },
-    { "source": "/api/healthz", "destination": "/api/healthz" },
-    { "source": "/(.*)",        "destination": "/index.html" }
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
