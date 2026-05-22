@@ -1,36 +1,44 @@
-// Edge Runtime — supports SSE streaming natively.
-// Vercel pipes the upstream ReadableStream straight to the client.
 export const config = { runtime: "edge" };
 
 const CYTOAI_BASE = "https://cytoai.jemph.workers.dev/v1";
 
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== "POST") {
-    return Response.json({ error: "Method not allowed" }, { status: 405 });
+    return jsonResponse({ error: "Method not allowed" }, 405);
   }
 
-  // User-supplied key takes precedence; fall back to server env var
   const apiKey =
-    req.headers.get("x-api-key") || process.env.CYTOAI_API_KEY;
+    req.headers.get("x-api-key") ||
+    (process as unknown as { env: Record<string, string> }).env.CYTOAI_API_KEY;
 
   if (!apiKey) {
-    return Response.json(
-      { error: "No API key. Set CYTOAI_API_KEY in Vercel env vars, or enter one in Settings." },
-      { status: 401 }
+    return jsonResponse(
+      {
+        error:
+          "No API key. Set CYTOAI_API_KEY in Vercel env vars, or enter one in Settings.",
+      },
+      401
     );
   }
 
   let body: Record<string, unknown>;
   try {
-    body = await req.json();
+    body = (await req.json()) as Record<string, unknown>;
   } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    return jsonResponse({ error: "Invalid JSON body" }, 400);
   }
 
-  const { model, messages, stream, temperature, max_tokens, tools } = body as any;
+  const { model, messages, stream, temperature, max_tokens, tools } = body;
 
   if (!model || !messages) {
-    return Response.json({ error: "model and messages are required" }, { status: 400 });
+    return jsonResponse({ error: "model and messages are required" }, 400);
   }
 
   const requestBody: Record<string, unknown> = {
@@ -54,15 +62,18 @@ export default async function handler(req: Request): Promise<Response> {
   if (!upstream.ok) {
     const errorText = await upstream.text();
     if (upstream.status === 429) {
-      return Response.json({ error: "Rate limit reached. Try again shortly." }, { status: 429 });
+      return jsonResponse({ error: "Rate limit reached. Try again shortly." }, 429);
     }
     if (upstream.status === 401) {
-      return Response.json({ error: "Invalid API key." }, { status: 401 });
+      return jsonResponse({ error: "Invalid API key." }, 401);
     }
-    return Response.json({ error: errorText }, { status: upstream.status });
+    return jsonResponse({ error: errorText }, upstream.status);
   }
 
-  // Pipe the SSE stream straight through — Edge Runtime handles this natively
+  if (!upstream.body) {
+    return jsonResponse({ error: "Empty response from upstream" }, 502);
+  }
+
   return new Response(upstream.body, {
     headers: {
       "Content-Type": "text/event-stream",
